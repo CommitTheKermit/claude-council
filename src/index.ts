@@ -10,9 +10,6 @@ import { bootstrapSession } from "./council/session.js";
  *
  * bootstrapSession 이 TS Agent SDK query()를 canUseTool 콜백과 함께 초기화한다.
  * canUseTool 은 AskUserQuestion만 협의(투표)로 라우팅하고 그 외 도구는 기본 allow 한다.
- *
- * TODO (다음 슬라이스):
- *  - DiscordAdapter 에 discord.js Client 주입 및 로그인 (poll/askHost 실제 구현)
  */
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -23,8 +20,9 @@ async function main(): Promise<void> {
   });
   await client.login(config.discordToken);
 
+  // 호스트 폴백 결정 제한 시간은 투표 타임아웃과 동일하게 둔다.
   const channel = new DiscordVoteChannel(client, config.discordChannelId);
-  const adapter = new DiscordAdapter(channel);
+  const adapter = new DiscordAdapter(channel, config.rules.timeoutMs);
 
   const prompt = process.argv.slice(2).join(" ") || "협업 세션을 시작합니다.";
 

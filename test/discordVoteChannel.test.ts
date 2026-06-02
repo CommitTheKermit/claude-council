@@ -48,6 +48,10 @@ function fakeCollector(clicks: FakeClick[], endReason: string) {
       }
       return collector;
     },
+    // postAndAwaitHost 는 첫 호스트 클릭 후 stop() 을 호출한다(여기선 no-op).
+    stop(_reason?: string) {
+      void _reason;
+    },
   };
   return collector;
 }
@@ -202,5 +206,54 @@ describe("DiscordVoteChannel.postAndCollect - 게시/수집(Discord API mock)", 
     const vc = new DiscordVoteChannel(client, "chan-1");
 
     await expect(vc.postAndCollect(payload, 500)).rejects.toThrow(/메시지를 보낼 수 없/);
+  });
+});
+
+// ---- postAndAwaitHost: 호스트 폴백 결정 수집(Discord API mock) -------------
+
+describe("DiscordVoteChannel.postAndAwaitHost - 호스트 결정 수집", () => {
+  it("콜렉터 필터가 호스트의 투표 버튼 클릭만 통과시킨다", async () => {
+    const channel = fakeTextChannel({ members: [], clicks: [], endReason: "time" });
+    const vc = new DiscordVoteChannel(fakeClient(channel), "chan-1");
+
+    await vc.postAndAwaitHost(payload, "host-1", 9_000);
+
+    const collectorOpts = channel.collectorSpy.mock.calls[0][0] as {
+      componentType: number;
+      time: number;
+      filter: (i: unknown) => boolean;
+    };
+    expect(collectorOpts.componentType).toBe(ComponentType.Button);
+    expect(collectorOpts.time).toBe(9_000);
+    // 호스트가 누른 투표 버튼만 통과한다
+    expect(
+      collectorOpts.filter({ customId: `${CUSTOM_ID_PREFIX}:0`, user: { id: "host-1" } }),
+    ).toBe(true);
+    // 다른 멤버의 클릭은 무시
+    expect(
+      collectorOpts.filter({ customId: `${CUSTOM_ID_PREFIX}:0`, user: { id: "u2" } }),
+    ).toBe(false);
+    // 투표 버튼이 아니면 무시
+    expect(collectorOpts.filter({ customId: "other:0", user: { id: "host-1" } })).toBe(false);
+  });
+
+  it("호스트의 첫 클릭을 RawButtonVote 로 돌려주고 ACK 한다", async () => {
+    const click = fakeClick("host-1", `${CUSTOM_ID_PREFIX}:1`);
+    const channel = fakeTextChannel({ members: [], clicks: [click], endReason: "host-decided" });
+    const vc = new DiscordVoteChannel(fakeClient(channel), "chan-1");
+
+    const result = await vc.postAndAwaitHost(payload, "host-1", 9_000);
+
+    expect(result).toEqual({ userId: "host-1", customId: `${CUSTOM_ID_PREFIX}:1` });
+    expect(click.deferUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("호스트가 응답하지 않고 제한 시간으로 끝나면 null 을 돌려준다", async () => {
+    const channel = fakeTextChannel({ members: [], clicks: [], endReason: "time" });
+    const vc = new DiscordVoteChannel(fakeClient(channel), "chan-1");
+
+    const result = await vc.postAndAwaitHost(payload, "host-1", 500);
+
+    expect(result).toBeNull();
   });
 });

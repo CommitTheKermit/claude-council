@@ -102,3 +102,25 @@ export function buildVoteMessage(question: CouncilQuestion): VoteMessagePayload 
     components: buildVoteActionRows(question),
   };
 }
+
+// 호스트 폴백 메시지의 임베드를 만든다. 폴백 사유를 제목으로 강조하고
+// 원 질문/선택지 설명은 투표 임베드와 동일하게 보여준다.
+export function buildHostPromptEmbed(question: CouncilQuestion, reason: string): EmbedBuilder {
+  const embed = buildVoteEmbed(question);
+  embed.setTitle("🛠️ 호스트 결정 필요");
+  // 폴백 사유를 원 질문 위에 함께 노출한다.
+  embed.setDescription(`${reason}\n\n${question.question}`);
+  return embed;
+}
+
+// 호스트 폴백 결정 메시지 페이로드를 만든다. 버튼/customId 는 투표와 동일해
+// 호스트의 클릭도 같은 방식(parseCustomId)으로 선택지 인덱스를 복원할 수 있다.
+export function buildHostPromptMessage(
+  question: CouncilQuestion,
+  reason: string,
+): VoteMessagePayload {
+  return {
+    embeds: [buildHostPromptEmbed(question, reason)],
+    components: buildVoteActionRows(question),
+  };
+}

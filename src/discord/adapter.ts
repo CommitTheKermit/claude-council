@@ -1,5 +1,13 @@
 import type { CouncilQuestion, Vote } from "../council/types.js";
-import { buildVoteMessage, parseCustomId, type VoteMessagePayload } from "./voteMessage.js";
+import {
+  buildVoteMessage,
+  buildHostPromptMessage,
+  parseCustomId,
+  type VoteMessagePayload,
+} from "./voteMessage.js";
+
+// 호스트 폴백 결정의 기본 제한 시간(ms). 투표 타임아웃과 동일한 3분.
+const DEFAULT_HOST_TIMEOUT_MS = 180_000;
 
 // 한 질문에 대한 투표 세션 결과 (집계 전 원시 데이터)
 export interface PollResult {
@@ -44,6 +52,13 @@ export interface VoteChannel {
   memberIds(): Promise<string[]>;
   // 버튼 투표 메시지를 채널에 게시하고 timeoutMs 동안 버튼 클릭을 수집
   postAndCollect(payload: VoteMessagePayload, timeoutMs: number): Promise<CollectResult>;
+  // 호스트 폴백 메시지를 게시하고 hostUserId 의 첫 버튼 클릭을 timeoutMs 동안 기다린다.
+  // 호스트가 제한 시간 내 응답하지 않으면 null 을 반환한다.
+  postAndAwaitHost(
+    payload: VoteMessagePayload,
+    hostUserId: string,
+    timeoutMs: number,
+  ): Promise<RawButtonVote | null>;
 }
 
 /**
@@ -53,7 +68,11 @@ export interface VoteChannel {
  * 실제 discord.js 연동은 VoteChannel 구현체에 위임해 단위 테스트 가능하게 한다.
  */
 export class DiscordAdapter implements MessagingAdapter {
-  constructor(private readonly channel: VoteChannel) {}
+  // hostTimeoutMs: 호스트 폴백 결정의 제한 시간(미지정 시 투표와 동일한 기본 3분).
+  constructor(
+    private readonly channel: VoteChannel,
+    private readonly hostTimeoutMs: number = DEFAULT_HOST_TIMEOUT_MS,
+  ) {}
 
   async poll(question: CouncilQuestion, timeoutMs: number): Promise<PollResult> {
     const memberIds = await this.channel.memberIds();
@@ -76,11 +95,27 @@ export class DiscordAdapter implements MessagingAdapter {
     return { votes, timedOut, participantCount: memberIds.length };
   }
 
+  /**
+   * 폴백 사유와 함께 호스트에게 최종 결정을 요청한다.
+   * 호스트가 버튼을 누르면 해당 선택지 label 을, 무응답이면 첫 선택지 label 로
+   * 안전 폴백해 세션이 멈추지 않게 한다(tallyVotes 는 hostChoice 가 반드시 필요).
+   */
   async askHost(
-    _question: CouncilQuestion,
-    _hostUserId: string,
-    _reason: string,
+    question: CouncilQuestion,
+    hostUserId: string,
+    reason: string,
   ): Promise<string> {
-    throw new Error("DiscordAdapter.askHost 미구현 (다음 슬라이스)");
+    const payload = buildHostPromptMessage(question, reason);
+    const click = await this.channel.postAndAwaitHost(payload, hostUserId, this.hostTimeoutMs);
+
+    if (click) {
+      const index = parseCustomId(click.customId);
+      if (index !== null && index >= 0 && index < question.options.length) {
+        return question.options[index].label;
+      }
+    }
+
+    // 호스트 무응답/무효 클릭 -> 첫 선택지로 안전 폴백
+    return question.options[0].label;
   }
 }

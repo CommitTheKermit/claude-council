@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { DiscordAdapter } from "../src/discord/adapter.js";
-import type { VoteChannel, CollectResult } from "../src/discord/adapter.js";
+import type { VoteChannel, CollectResult, RawButtonVote } from "../src/discord/adapter.js";
 import type { VoteMessagePayload } from "../src/discord/voteMessage.js";
 import { CUSTOM_ID_PREFIX } from "../src/discord/voteMessage.js";
 import type { CouncilQuestion } from "../src/council/types.js";
@@ -20,6 +20,7 @@ function mockChannel(memberIds: string[], collect: CollectResult) {
       posted.push(payload);
       return collect;
     },
+    postAndAwaitHost: async () => null,
   };
   return { channel, posted };
 }
@@ -100,6 +101,7 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     const channel: VoteChannel = {
       memberIds: async () => ["u1", "u2"],
       postAndCollect: collectSpy,
+      postAndAwaitHost: async () => null,
     };
     const adapter = new DiscordAdapter(channel);
 
@@ -110,5 +112,64 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     expect(collectSpy.mock.calls[0][1]).toBe(500);
     expect(result.timedOut).toBe(true);
     expect(result.votes).toEqual([]);
+  });
+});
+
+describe("DiscordAdapter.askHost - 호스트 폴백 결정", () => {
+  // 호스트 결정 메시지를 게시하고, 지정한 클릭을 호스트 응답으로 돌려주는 mock 채널
+  function hostMockChannel(hostClick: RawButtonVote | null) {
+    const calls: { payload: VoteMessagePayload; hostUserId: string; timeoutMs: number }[] = [];
+    const channel: VoteChannel = {
+      memberIds: async () => [],
+      postAndCollect: async () => ({ interactions: [], timedOut: true }),
+      postAndAwaitHost: async (payload, hostUserId, timeoutMs) => {
+        calls.push({ payload, hostUserId, timeoutMs });
+        return hostClick;
+      },
+    };
+    return { channel, calls };
+  }
+
+  it("호스트가 누른 버튼을 선택지 label 로 변환해 반환한다", async () => {
+    const { channel, calls } = hostMockChannel({
+      userId: "host-1",
+      customId: `${CUSTOM_ID_PREFIX}:1`,
+    });
+    const adapter = new DiscordAdapter(channel);
+
+    const choice = await adapter.askHost(question, "host-1", "동점입니다");
+
+    expect(choice).toBe("파랑");
+    // 폴백 사유가 임베드 설명에 포함되고, 호스트/타임아웃이 그대로 전달된다
+    expect(calls).toHaveLength(1);
+    expect(calls[0].hostUserId).toBe("host-1");
+    expect(calls[0].payload.embeds[0].toJSON().description).toContain("동점입니다");
+  });
+
+  it("호스트가 응답하지 않으면(null) 첫 선택지로 안전 폴백한다", async () => {
+    const { channel } = hostMockChannel(null);
+    const adapter = new DiscordAdapter(channel);
+
+    const choice = await adapter.askHost(question, "host-1", "타임아웃");
+
+    expect(choice).toBe("빨강");
+  });
+
+  it("호스트 클릭이 범위를 벗어나면 첫 선택지로 안전 폴백한다", async () => {
+    const { channel } = hostMockChannel({ userId: "host-1", customId: `${CUSTOM_ID_PREFIX}:9` });
+    const adapter = new DiscordAdapter(channel);
+
+    const choice = await adapter.askHost(question, "host-1", "정족수 미달");
+
+    expect(choice).toBe("빨강");
+  });
+
+  it("생성자에 준 hostTimeoutMs 를 호스트 결정 제한 시간으로 사용한다", async () => {
+    const { channel, calls } = hostMockChannel(null);
+    const adapter = new DiscordAdapter(channel, 7_777);
+
+    await adapter.askHost(question, "host-1", "타임아웃");
+
+    expect(calls[0].timeoutMs).toBe(7_777);
   });
 });
