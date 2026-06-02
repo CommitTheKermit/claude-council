@@ -28,6 +28,54 @@ function uniqueVoterCount(votes: Vote[]): number {
   return new Set(votes.map((v) => v.userId)).size;
 }
 
+// 정족수 충족 여부: 투표한 사람 비율이 기준 이상인가
+function isQuorumMet(voterCount: number, participantCount: number, quorumRatio: number): boolean {
+  return participantCount > 0 && voterCount / participantCount >= quorumRatio;
+}
+
+// classifyOutcome 입력 (hostChoice 불필요 - 결과 유형만 판정)
+export type ClassifyInput = Omit<TallyInput, "hostChoice">;
+
+/**
+ * hostChoice 없이 집계 결과 "유형"만 판정한다.
+ * - 타임아웃 + 무응답         -> host-timeout
+ * - 정족수 미달               -> host-quorum-fail
+ * - 정족수 충족 + 동점        -> host-tiebreak
+ * - 정족수 충족 + 단독 최다득 -> majority
+ *
+ * 폴백 사유(reason) 산출과 tallyVotes 판정에 공통으로 쓰인다.
+ */
+export function classifyOutcome(input: ClassifyInput): TallyOutcome {
+  const { votes, participantCount, rules, timedOut } = input;
+  const voterCount = uniqueVoterCount(votes);
+
+  // 타임아웃 + 아무도 투표 안 함
+  if (timedOut && voterCount === 0) {
+    return "host-timeout";
+  }
+
+  // 정족수 미달
+  if (!isQuorumMet(voterCount, participantCount, rules.quorumRatio)) {
+    return "host-quorum-fail";
+  }
+
+  const counts = countByChoice(votes);
+  const max = Math.max(...counts.values());
+  const winners = [...counts.entries()].filter(([, c]) => c === max);
+
+  // 동점
+  if (winners.length > 1) {
+    return "host-tiebreak";
+  }
+
+  return "majority";
+}
+
+// host-* 결과는 호스트 폴백이 필요하다.
+export function requiresHostFallback(outcome: TallyOutcome): boolean {
+  return outcome !== "majority";
+}
+
 /**
  * 투표를 집계해 Claude에 주입할 최종 선택을 결정한다.
  *
@@ -40,38 +88,20 @@ function uniqueVoterCount(votes: Vote[]): number {
  * 호스트 결정이 필요한 경우 hostChoice가 반드시 제공되어야 한다.
  */
 export function tallyVotes(input: TallyInput): TallyResult {
-  const { votes, participantCount, rules, timedOut } = input;
-  const voterCount = uniqueVoterCount(votes);
+  const outcome = classifyOutcome(input);
 
-  const needHost = (outcome: TallyOutcome): TallyResult => {
+  if (requiresHostFallback(outcome)) {
     if (input.hostChoice === undefined) {
       throw new Error(`호스트 결정이 필요한 상황(${outcome})이지만 hostChoice가 없습니다.`);
     }
     return { choice: input.hostChoice, outcome, contested: true };
-  };
-
-  // 타임아웃 + 아무도 투표 안 함
-  if (timedOut && voterCount === 0) {
-    return needHost("host-timeout");
   }
 
-  // 정족수 검사: 투표한 사람 비율이 기준 미만이면 호스트 결정
-  const quorumMet =
-    participantCount > 0 && voterCount / participantCount >= rules.quorumRatio;
-  if (!quorumMet) {
-    return needHost("host-quorum-fail");
-  }
-
-  const counts = countByChoice(votes);
+  // majority: 단독 최다 득표 label
+  const counts = countByChoice(input.votes);
   const max = Math.max(...counts.values());
-  const winners = [...counts.entries()].filter(([, c]) => c === max).map(([label]) => label);
-
-  // 동점이면 호스트 결정
-  if (winners.length > 1) {
-    return needHost("host-tiebreak");
-  }
-
-  return { choice: winners[0], outcome: "majority", contested: false };
+  const winner = [...counts.entries()].find(([, c]) => c === max)![0];
+  return { choice: winner, outcome: "majority", contested: false };
 }
 
 // 기본 투표 규칙
