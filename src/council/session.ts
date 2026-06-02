@@ -63,7 +63,7 @@ export function createCanUseTool(adapter: MessagingAdapter, rules: VoteRules): C
   return async (toolName, input, _options) => {
     if (isInterceptedTool(toolName)) {
       // handleAskUserQuestion 은 { behavior:"allow", updatedInput:{...answers} } 를 돌려준다
-      const decision = await handleAskUserQuestion(input as never, adapter, rules);
+      const decision = await handleAskUserQuestion(input, adapter, rules);
       return {
         behavior: "allow",
         updatedInput: decision.updatedInput as unknown as Record<string, unknown>,
