@@ -5,6 +5,12 @@ import { handleAskUserQuestion } from "./canUseTool.js";
 // canUseTool 콜백이 가로채는 도구 이름 (MVP: 객관식 AskUserQuestion만)
 export const INTERCEPTED_TOOL_NAME = "AskUserQuestion";
 
+// 주어진 도구 이름이 협의(투표)로 가로채야 하는 대상인지 판별한다.
+// MVP에서는 AskUserQuestion만 가로채고 그 외 모든 도구는 통과시킨다.
+export function isInterceptedTool(toolName: string): boolean {
+  return toolName === INTERCEPTED_TOOL_NAME;
+}
+
 // Agent SDK canUseTool 콜백이 반환해야 하는 PermissionResult의 최소 형태
 export type PermissionResult =
   | { behavior: "allow"; updatedInput: Record<string, unknown> }
@@ -55,7 +61,7 @@ export interface SessionHandle {
  */
 export function createCanUseTool(adapter: MessagingAdapter, rules: VoteRules): CanUseTool {
   return async (toolName, input, _options) => {
-    if (toolName === INTERCEPTED_TOOL_NAME) {
+    if (isInterceptedTool(toolName)) {
       // handleAskUserQuestion 은 { behavior:"allow", updatedInput:{...answers} } 를 돌려준다
       const decision = await handleAskUserQuestion(input as never, adapter, rules);
       return {
