@@ -1,6 +1,8 @@
 import "dotenv/config";
+import { Client, GatewayIntentBits } from "discord.js";
 import { loadConfig } from "./config.js";
 import { DiscordAdapter } from "./discord/adapter.js";
+import { DiscordVoteChannel } from "./discord/discordVoteChannel.js";
 import { bootstrapSession } from "./council/session.js";
 
 /**
@@ -14,7 +16,15 @@ import { bootstrapSession } from "./council/session.js";
  */
 async function main(): Promise<void> {
   const config = loadConfig();
-  const adapter = new DiscordAdapter(config.discordChannelId);
+
+  // Discord 클라이언트 로그인 후 채널 포트를 어댑터에 주입한다.
+  const client = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  });
+  await client.login(config.discordToken);
+
+  const channel = new DiscordVoteChannel(client, config.discordChannelId);
+  const adapter = new DiscordAdapter(channel);
 
   const prompt = process.argv.slice(2).join(" ") || "협업 세션을 시작합니다.";
 
