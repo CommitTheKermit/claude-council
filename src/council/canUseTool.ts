@@ -24,7 +24,7 @@ export async function resolveCouncilDecision(
   adapter: MessagingAdapter,
   rules: VoteRules,
 ): Promise<TallyResult> {
-  const poll = await adapter.poll(question, rules.timeoutMs);
+  const poll = await adapter.poll(question, rules);
   const tallyInput = {
     votes: poll.votes,
     participantCount: poll.participantCount,

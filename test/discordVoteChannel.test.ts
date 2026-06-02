@@ -71,11 +71,16 @@ function fakeTextChannel(opts: {
     void collectorOpts;
     return fakeCollector(opts.clicks ?? [], opts.endReason ?? "time");
   });
+  // 진행 상황 라이브 갱신(message.edit) 호출을 캡처한다.
+  const editSpy = vi.fn(async (payload: unknown) => {
+    void payload;
+    return undefined;
+  });
   const send = vi.fn(async (payload: unknown) => {
     void payload;
-    return { createMessageComponentCollector: collectorSpy };
+    return { createMessageComponentCollector: collectorSpy, edit: editSpy };
   });
-  return { members: memberMap, send, collectorSpy };
+  return { members: memberMap, send, collectorSpy, editSpy };
 }
 
 // channels.fetch 가 주어진 채널을 돌려주는 가짜 Client 를 만든다.
@@ -185,6 +190,40 @@ describe("DiscordVoteChannel.postAndCollect - 게시/수집(Discord API mock)", 
 
     expect(result.timedOut).toBe(true);
     expect(result.interactions).toEqual([]);
+  });
+
+  it("클릭마다 onProgress 결과로 메시지를 수정해 진행 상황을 라이브 갱신한다", async () => {
+    const clicks = [
+      fakeClick("u1", `${CUSTOM_ID_PREFIX}:0`),
+      fakeClick("u2", `${CUSTOM_ID_PREFIX}:1`),
+    ];
+    const channel = fakeTextChannel({ members: [], clicks, endReason: "user" });
+    const vc = new DiscordVoteChannel(fakeClient(channel), "chan-1");
+
+    // onProgress 는 현재까지의 클릭 수를 임베드로 돌려준다(렌더 형태는 무관, 호출만 검증).
+    const onProgress = vi.fn((raws: { userId: string; customId: string }[]) => ({
+      embeds: [{ toJSON: () => ({ n: raws.length }) } as never],
+      components: [],
+    }));
+
+    await vc.postAndCollect(payload, 1_000, onProgress);
+
+    // 클릭 2건 -> onProgress 2회, message.edit 2회
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    expect(channel.editSpy).toHaveBeenCalledTimes(2);
+    // 두 번째 edit 은 누적 클릭 2건이 반영된 페이로드여야 한다
+    const secondEdit = channel.editSpy.mock.calls[1][0] as { embeds: { toJSON(): unknown }[] };
+    expect(secondEdit.embeds[0].toJSON()).toEqual({ n: 2 });
+  });
+
+  it("onProgress 가 없으면 메시지를 수정하지 않는다", async () => {
+    const clicks = [fakeClick("u1", `${CUSTOM_ID_PREFIX}:0`)];
+    const channel = fakeTextChannel({ members: [], clicks, endReason: "user" });
+    const vc = new DiscordVoteChannel(fakeClient(channel), "chan-1");
+
+    await vc.postAndCollect(payload, 1_000);
+
+    expect(channel.editSpy).not.toHaveBeenCalled();
   });
 
   it("콜렉터가 제한 시간 외 사유로 끝나면 timedOut=false", async () => {

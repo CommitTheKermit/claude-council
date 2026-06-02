@@ -33,6 +33,15 @@ function isQuorumMet(voterCount: number, participantCount: number, quorumRatio: 
   return participantCount > 0 && voterCount / participantCount >= quorumRatio;
 }
 
+/**
+ * 정족수를 채우는 데 필요한 최소 투표 인원.
+ * voterCount >= ceil(participantCount * quorumRatio) 이면 isQuorumMet 과 정확히 일치한다.
+ * (투표 메시지에 "정족수 N명 필요"를 표시하기 위한 값)
+ */
+export function requiredVotesForQuorum(participantCount: number, quorumRatio: number): number {
+  return Math.ceil(participantCount * quorumRatio);
+}
+
 // classifyOutcome 입력 (hostChoice 불필요 - 결과 유형만 판정)
 export type ClassifyInput = Omit<TallyInput, "hostChoice">;
 

@@ -3,13 +3,20 @@ import { DiscordAdapter } from "../src/discord/adapter.js";
 import type { VoteChannel, CollectResult, RawButtonVote } from "../src/discord/adapter.js";
 import type { VoteMessagePayload } from "../src/discord/voteMessage.js";
 import { CUSTOM_ID_PREFIX } from "../src/discord/voteMessage.js";
-import type { CouncilQuestion } from "../src/council/types.js";
+import type { CouncilQuestion, VoteRules } from "../src/council/types.js";
 
 const question: CouncilQuestion = {
   question: "어떤 색?",
   header: "색상",
   options: [{ label: "빨강" }, { label: "파랑" }],
 };
+
+// poll 은 이제 VoteRules 를 받는다(timeoutMs + 진행 표시용 quorumRatio).
+const rules = (timeoutMs: number, quorumRatio = 0.5): VoteRules => ({
+  timeoutMs,
+  quorumRatio,
+  hostUserId: "host",
+});
 
 // 게시된 페이로드와 반환할 수집 결과를 제어하는 mock 채널
 function mockChannel(memberIds: string[], collect: CollectResult) {
@@ -33,7 +40,7 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     });
     const adapter = new DiscordAdapter(channel);
 
-    await adapter.poll(question, 1_000);
+    await adapter.poll(question, rules(1_000));
 
     // 한 번 게시되고, 선택지가 버튼으로 렌더된다
     expect(posted).toHaveLength(1);
@@ -55,7 +62,7 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     });
     const adapter = new DiscordAdapter(channel);
 
-    const result = await adapter.poll(question, 1_000);
+    const result = await adapter.poll(question, rules(1_000));
 
     expect(result.participantCount).toBe(3);
     expect(result.timedOut).toBe(false);
@@ -75,7 +82,7 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     });
     const adapter = new DiscordAdapter(channel);
 
-    const result = await adapter.poll(question, 1_000);
+    const result = await adapter.poll(question, rules(1_000));
 
     expect(result.votes).toEqual([{ userId: "u1", choice: "빨강" }]);
   });
@@ -91,7 +98,7 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     });
     const adapter = new DiscordAdapter(channel);
 
-    const result = await adapter.poll(question, 1_000);
+    const result = await adapter.poll(question, rules(1_000));
 
     expect(result.votes).toEqual([{ userId: "u3", choice: "파랑" }]);
   });
@@ -105,13 +112,66 @@ describe("DiscordAdapter.poll - 버튼 투표 포워딩", () => {
     };
     const adapter = new DiscordAdapter(channel);
 
-    const result = await adapter.poll(question, 500);
+    const result = await adapter.poll(question, rules(500));
 
     expect(collectSpy).toHaveBeenCalledOnce();
     // 게시 시 timeout 이 그대로 채널에 전달된다
     expect(collectSpy.mock.calls[0][1]).toBe(500);
     expect(result.timedOut).toBe(true);
     expect(result.votes).toEqual([]);
+  });
+});
+
+describe("DiscordAdapter.poll - 진행 상황 라이브 표시", () => {
+  // 게시 페이로드와 onProgress 콜백을 캡처하는 mock 채널
+  function progressMockChannel(memberIds: string[], collect: CollectResult) {
+    const posted: VoteMessagePayload[] = [];
+    let captured: ((raws: RawButtonVote[]) => VoteMessagePayload) | undefined;
+    const channel: VoteChannel = {
+      memberIds: async () => memberIds,
+      postAndCollect: async (payload, _timeoutMs, onProgress) => {
+        posted.push(payload);
+        captured = onProgress;
+        return collect;
+      },
+      postAndAwaitHost: async () => null,
+    };
+    return { channel, posted, getProgress: () => captured };
+  }
+
+  it("게시 시점 푸터에 투표 0명/정족수/참여자 수를 표시한다", async () => {
+    const { channel, posted } = progressMockChannel(["u1", "u2", "u3", "u4", "u5"], {
+      interactions: [],
+      timedOut: true,
+    });
+    const adapter = new DiscordAdapter(channel);
+
+    // 참여자 5명, 정족수 0.5 -> 필요 인원 ceil(2.5)=3
+    await adapter.poll(question, rules(1_000, 0.5));
+
+    expect(posted[0].embeds[0].toJSON().footer?.text).toBe(
+      "🗳️ 투표 0명 / 정족수 3명 필요 · 참여자 5명",
+    );
+  });
+
+  it("클릭이 들어오면 고유 투표 인원으로 푸터를 갱신한다(중복/비멤버 제외)", async () => {
+    const { channel, getProgress } = progressMockChannel(["u1", "u2", "u3", "u4", "u5"], {
+      interactions: [],
+      timedOut: true,
+    });
+    const adapter = new DiscordAdapter(channel);
+    await adapter.poll(question, rules(1_000, 0.5));
+
+    const updated = getProgress()!([
+      { userId: "u1", customId: `${CUSTOM_ID_PREFIX}:0` },
+      { userId: "u1", customId: `${CUSTOM_ID_PREFIX}:1` }, // 같은 유저 재클릭 -> 1명
+      { userId: "u2", customId: `${CUSTOM_ID_PREFIX}:0` },
+      { userId: "outsider", customId: `${CUSTOM_ID_PREFIX}:0` }, // 비멤버 -> 제외
+    ]);
+
+    expect(updated.embeds[0].toJSON().footer?.text).toBe(
+      "🗳️ 투표 2명 / 정족수 3명 필요 · 참여자 5명",
+    );
   });
 });
 

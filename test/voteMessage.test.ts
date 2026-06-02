@@ -7,6 +7,7 @@ import {
   buildVoteActionRows,
   buildVoteEmbed,
   buildVoteMessage,
+  voteStatusLine,
   CUSTOM_ID_PREFIX,
 } from "../src/discord/voteMessage.js";
 import type { CouncilQuestion } from "../src/council/types.js";
@@ -94,5 +95,28 @@ describe("buildVoteMessage", () => {
     expect(payload.components).toHaveLength(1);
     const buttons = payload.components[0].toJSON().components;
     expect(buttons).toHaveLength(3);
+  });
+
+  it("status 가 없으면 진행 상황 푸터를 넣지 않는다", () => {
+    expect(buildVoteMessage(question).embeds[0].toJSON().footer).toBeUndefined();
+  });
+
+  it("status 가 있으면 푸터에 진행 상황을 표시한다", () => {
+    const payload = buildVoteMessage(question, {
+      votedCount: 2,
+      requiredVotes: 3,
+      participantCount: 5,
+    });
+    expect(payload.embeds[0].toJSON().footer?.text).toBe(
+      "🗳️ 투표 2명 / 정족수 3명 필요 · 참여자 5명",
+    );
+  });
+});
+
+describe("voteStatusLine", () => {
+  it("투표 인원/정족수/참여자 수를 한 줄로 표현한다", () => {
+    expect(voteStatusLine({ votedCount: 0, requiredVotes: 3, participantCount: 5 })).toBe(
+      "🗳️ 투표 0명 / 정족수 3명 필요 · 참여자 5명",
+    );
   });
 });

@@ -1,4 +1,5 @@
-import type { CouncilQuestion, Vote } from "../council/types.js";
+import type { CouncilQuestion, Vote, VoteRules } from "../council/types.js";
+import { requiredVotesForQuorum } from "../council/tally.js";
 import {
   buildVoteMessage,
   buildHostPromptMessage,
@@ -23,11 +24,16 @@ export interface PollResult {
  * MVP는 Discord 구현만 제공하지만, 추후 Slack 등으로 확장 가능하도록 분리한다.
  */
 export interface MessagingAdapter {
-  // 질문/선택지를 채널에 게시하고 timeoutMs 동안 투표를 모아 반환
-  poll(question: CouncilQuestion, timeoutMs: number): Promise<PollResult>;
+  // 질문/선택지를 채널에 게시하고 rules.timeoutMs 동안 투표를 모아 반환.
+  // 정족수 비율(rules.quorumRatio)은 진행 상황("정족수 N명 필요") 표시에 쓰인다.
+  poll(question: CouncilQuestion, rules: VoteRules): Promise<PollResult>;
   // 호스트에게 최종 결정을 요청 (폴백 경로)
   askHost(question: CouncilQuestion, hostUserId: string, reason: string): Promise<string>;
 }
+
+// 투표가 한 건 들어올 때마다 호출돼, 현재까지의 클릭으로 갱신된 메시지 페이로드를
+// 돌려주는 콜백. VoteChannel 은 이 결과로 게시된 메시지를 수정해 진행 상황을 라이브로 보여준다.
+export type VoteProgressRenderer = (rawVotes: RawButtonVote[]) => VoteMessagePayload;
 
 // 버튼 클릭 한 건 (실제 Discord ButtonInteraction 에서 추출한 최소 정보)
 export interface RawButtonVote {
@@ -50,8 +56,13 @@ export interface CollectResult {
 export interface VoteChannel {
   // 정족수 기준이 되는 채널 멤버(투표 가능 인원) ID 목록
   memberIds(): Promise<string[]>;
-  // 버튼 투표 메시지를 채널에 게시하고 timeoutMs 동안 버튼 클릭을 수집
-  postAndCollect(payload: VoteMessagePayload, timeoutMs: number): Promise<CollectResult>;
+  // 버튼 투표 메시지를 채널에 게시하고 timeoutMs 동안 버튼 클릭을 수집.
+  // onProgress 가 주어지면 클릭이 들어올 때마다 호출해 받은 페이로드로 메시지를 갱신한다.
+  postAndCollect(
+    payload: VoteMessagePayload,
+    timeoutMs: number,
+    onProgress?: VoteProgressRenderer,
+  ): Promise<CollectResult>;
   // 호스트 폴백 메시지를 게시하고 hostUserId 의 첫 버튼 클릭을 timeoutMs 동안 기다린다.
   // 호스트가 제한 시간 내 응답하지 않으면 null 을 반환한다.
   postAndAwaitHost(
@@ -74,25 +85,45 @@ export class DiscordAdapter implements MessagingAdapter {
     private readonly hostTimeoutMs: number = DEFAULT_HOST_TIMEOUT_MS,
   ) {}
 
-  async poll(question: CouncilQuestion, timeoutMs: number): Promise<PollResult> {
-    const memberIds = await this.channel.memberIds();
-    const memberSet = new Set(memberIds);
-
-    // 질문을 버튼 투표 메시지로 만들어 채널에 포워딩하고 클릭을 모은다.
-    const payload = buildVoteMessage(question);
-    const { interactions, timedOut } = await this.channel.postAndCollect(payload, timeoutMs);
-
+  // 수집된 버튼 클릭을 유효한 표(Vote)로 변환한다.
+  // 투표 버튼이 아니거나 범위를 벗어난 customId, 채널 멤버가 아닌 클릭은 버린다.
+  private rawVotesToVotes(
+    raws: RawButtonVote[],
+    question: CouncilQuestion,
+    memberSet: Set<string>,
+  ): Vote[] {
     const votes: Vote[] = [];
-    for (const raw of interactions) {
+    for (const raw of raws) {
       const index = parseCustomId(raw.customId);
-      // 투표 버튼이 아니거나 범위를 벗어난 customId 는 무시
       if (index === null || index < 0 || index >= question.options.length) continue;
-      // 채널 멤버만 투표 가능 (멤버십 검증)
       if (!memberSet.has(raw.userId)) continue;
       votes.push({ userId: raw.userId, choice: question.options[index].label });
     }
+    return votes;
+  }
 
-    return { votes, timedOut, participantCount: memberIds.length };
+  async poll(question: CouncilQuestion, rules: VoteRules): Promise<PollResult> {
+    const memberIds = await this.channel.memberIds();
+    const memberSet = new Set(memberIds);
+    const participantCount = memberIds.length;
+    const requiredVotes = requiredVotesForQuorum(participantCount, rules.quorumRatio);
+
+    // 현재까지의 클릭으로 진행 상황(투표 고유 인원/정족수/참여자) 푸터를 갱신해 렌더한다.
+    const render: VoteProgressRenderer = (raws) => {
+      const votes = this.rawVotesToVotes(raws, question, memberSet);
+      const votedCount = new Set(votes.map((v) => v.userId)).size;
+      return buildVoteMessage(question, { votedCount, requiredVotes, participantCount });
+    };
+
+    // 게시 시점엔 투표 0명으로 시작하고, 클릭이 들어올 때마다 render 로 메시지를 갱신한다.
+    const { interactions, timedOut } = await this.channel.postAndCollect(
+      render([]),
+      rules.timeoutMs,
+      render,
+    );
+
+    const votes = this.rawVotesToVotes(interactions, question, memberSet);
+    return { votes, timedOut, participantCount };
   }
 
   /**

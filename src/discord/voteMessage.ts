@@ -73,8 +73,21 @@ export function buildVoteActionRows(
   );
 }
 
+// 투표 진행 상황 (푸터에 표시). votedCount 는 지금까지 투표한 고유 인원.
+export interface VoteStatus {
+  votedCount: number;
+  requiredVotes: number;
+  participantCount: number;
+}
+
+// 진행 상황을 한 줄 문구로 만든다. 예: "🗳️ 투표 2명 / 정족수 3명 필요 · 참여자 5명"
+export function voteStatusLine(status: VoteStatus): string {
+  return `🗳️ 투표 ${status.votedCount}명 / 정족수 ${status.requiredVotes}명 필요 · 참여자 ${status.participantCount}명`;
+}
+
 // 질문 텍스트와 선택지 설명을 보여주는 임베드를 만든다.
-export function buildVoteEmbed(question: CouncilQuestion): EmbedBuilder {
+// status 가 주어지면 푸터에 투표 진행 상황을 표시한다.
+export function buildVoteEmbed(question: CouncilQuestion, status?: VoteStatus): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setTitle(question.header && question.header.length > 0 ? question.header : "투표")
     .setDescription(question.question);
@@ -86,6 +99,9 @@ export function buildVoteEmbed(question: CouncilQuestion): EmbedBuilder {
       value: opt.description && opt.description.length > 0 ? opt.description : "​",
     });
   }
+  if (status) {
+    embed.setFooter({ text: voteStatusLine(status) });
+  }
   return embed;
 }
 
@@ -96,9 +112,13 @@ export interface VoteMessagePayload {
 }
 
 // 가로챈 객관식 질문을 Discord 버튼 투표 메시지 페이로드로 변환한다.
-export function buildVoteMessage(question: CouncilQuestion): VoteMessagePayload {
+// status 가 주어지면 푸터에 투표 진행 상황(투표 인원/정족수/참여자)을 함께 렌더한다.
+export function buildVoteMessage(
+  question: CouncilQuestion,
+  status?: VoteStatus,
+): VoteMessagePayload {
   return {
-    embeds: [buildVoteEmbed(question)],
+    embeds: [buildVoteEmbed(question, status)],
     components: buildVoteActionRows(question),
   };
 }

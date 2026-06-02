@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { tallyVotes } from "../src/council/tally.js";
+import { tallyVotes, requiredVotesForQuorum } from "../src/council/tally.js";
 import type { VoteRules } from "../src/council/types.js";
+
+describe("requiredVotesForQuorum", () => {
+  it("정족수 비율을 채우는 최소 인원을 올림으로 계산한다", () => {
+    expect(requiredVotesForQuorum(5, 0.5)).toBe(3); // ceil(2.5)
+    expect(requiredVotesForQuorum(4, 0.5)).toBe(2); // ceil(2.0)
+    expect(requiredVotesForQuorum(3, 0.5)).toBe(2); // ceil(1.5)
+    expect(requiredVotesForQuorum(0, 0.5)).toBe(0);
+  });
+});
 
 const rules: VoteRules = {
   timeoutMs: 180_000,

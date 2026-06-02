@@ -1,5 +1,10 @@
 import { Client, ComponentType, type Interaction } from "discord.js";
-import type { CollectResult, RawButtonVote, VoteChannel } from "./adapter.js";
+import type {
+  CollectResult,
+  RawButtonVote,
+  VoteChannel,
+  VoteProgressRenderer,
+} from "./adapter.js";
 import type { VoteMessagePayload } from "./voteMessage.js";
 import { CUSTOM_ID_PREFIX } from "./voteMessage.js";
 
@@ -15,6 +20,12 @@ interface CollectorLike {
   on(event: "collect", handler: (interaction: ButtonClick) => void): CollectorLike;
   on(event: "end", handler: (collected: unknown, reason: string) => void): CollectorLike;
   stop(reason?: string): void;
+}
+
+// 게시된 메시지의 최소 표면 (콜렉터 부착 + 진행 상황 갱신용 edit).
+interface PostedMessage {
+  createMessageComponentCollector(opts: unknown): CollectorLike;
+  edit(payload: { embeds: unknown[]; components: unknown[] }): Promise<unknown>;
 }
 
 /**
@@ -43,9 +54,7 @@ export class DiscordVoteChannel implements VoteChannel {
   }
 
   // 페이로드를 채널에 게시하고 버튼 콜렉터를 붙일 수 있는 메시지를 돌려준다.
-  private async postMessage(payload: VoteMessagePayload): Promise<{
-    createMessageComponentCollector: (opts: unknown) => CollectorLike;
-  }> {
+  private async postMessage(payload: VoteMessagePayload): Promise<PostedMessage> {
     const channel = await this.client.channels.fetch(this.channelId);
     if (!channel || !("send" in channel) || typeof channel.send !== "function") {
       throw new Error(`채널 ${this.channelId} 에 메시지를 보낼 수 없습니다.`);
@@ -53,10 +62,14 @@ export class DiscordVoteChannel implements VoteChannel {
     return (await channel.send({
       embeds: payload.embeds,
       components: payload.components,
-    })) as unknown as { createMessageComponentCollector: (opts: unknown) => CollectorLike };
+    })) as unknown as PostedMessage;
   }
 
-  async postAndCollect(payload: VoteMessagePayload, timeoutMs: number): Promise<CollectResult> {
+  async postAndCollect(
+    payload: VoteMessagePayload,
+    timeoutMs: number,
+    onProgress?: VoteProgressRenderer,
+  ): Promise<CollectResult> {
     const message = await this.postMessage(payload);
 
     return await new Promise<CollectResult>((resolve) => {
@@ -72,6 +85,13 @@ export class DiscordVoteChannel implements VoteChannel {
         interactions.push({ userId: interaction.user.id, customId: interaction.customId });
         // 클릭을 ACK 해 "상호작용 실패" 표시를 막는다.
         void interaction.deferUpdate().catch(() => undefined);
+        // 진행 상황을 라이브로 갱신한다(실패는 무시 - 수집 자체는 계속).
+        if (onProgress) {
+          const updated = onProgress(interactions);
+          void message
+            .edit({ embeds: updated.embeds, components: updated.components })
+            .catch(() => undefined);
+        }
       });
       collector.on("end", (_collected, reason) => {
         resolve({ interactions, timedOut: reason === "time" });
