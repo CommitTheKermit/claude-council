@@ -84,7 +84,7 @@ npm test               # 테스트
 
 ```
 Result: <winningLabel>
-Outcome: <majority|tie|no-quorum|timeout>
+Outcome: <majority|tie|no-quorum|timeout|host-fallback>
 Votes: <totalVotes>/<quorumTotal> (quorum <met|not met>)
 Fallback: <none|host>
 ```
@@ -118,3 +118,25 @@ claude mcp add council-vote \
 ```
 
 > `claude mcp add` 를 통한 end-to-end 등록은 `npm test` 로 게이트되지 않는 수동 통합 점검이다. 자동 검증은 `councilTool`/`server` 단위 테스트(모킹 어댑터/주입 fake)로 수행한다.
+
+### 환경변수
+
+`loadConfig()` 가 `process.env`(또는 `.env`)에서 읽는다.
+
+| 변수 | 필수 | 설명 |
+|---|---|---|
+| `DISCORD_TOKEN` | 필수 | Discord 봇 토큰 |
+| `DISCORD_CHANNEL_ID` | 필수 | 투표를 띄울 채널 ID (개발자 모드 ON 후 채널 우클릭 -> ID 복사) |
+| `HOST_USER_ID` | 필수 | 폴백 결정권을 가진 호스트(세션 시작자) 사용자 ID |
+| `VOTE_TIMEOUT_SECONDS` | 선택 | 투표 타임아웃(초). 미설정 시 기본 180초. MCP 도구 타임아웃은 이 값 +30초 이상으로 |
+| `VOTE_QUORUM_RATIO` | 선택 | 정족수 비율(0-1). 미설정 시 기본 과반 |
+
+### CLAUDE.md 유도 문구
+
+MCP 도구는 내장 `AskUserQuestion` 을 강제로 막지 못한다(유도식). 팀 합의가 필요한 질문에서 Claude 가 `council_vote` 를 쓰도록, 프로젝트 `CLAUDE.md` 에 다음을 추가한다.
+
+```markdown
+# 팀 의사결정
+여러 사람이 공유하는 세션에서 객관식 결정/합의가 필요하면, 내장 AskUserQuestion 대신
+council_vote MCP 도구를 호출해 Discord 투표로 합의를 받을 것.
+```
