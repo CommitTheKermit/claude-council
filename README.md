@@ -70,3 +70,51 @@ npm test               # 테스트
 ```
 
 > 기존 `stt-verify-agent`(Kotlin/Koog/Gemini)는 UX/구조 참고용이며 이 프로젝트와 코드 공유는 없다.
+
+## council_vote MCP 서버
+
+표준 `claude` CLI/IDE 환경에서 동작하도록, `canUseTool` 가로채기 대신 Claude가 명시적으로 호출하는 `council_vote` MCP stdio 도구를 제공한다.
+
+- 진입점: `src/mcp/server.ts` (thin shell) -> `src/mcp/bootstrap.ts` (DI 부팅 와이어링) -> `src/mcp/councilTool.ts` (핸들러 팩토리 + inputSchema)
+- 코어 모듈(`council/tally.ts`, `resolveCouncilDecision`, `discord/*`, `config.ts`)은 그대로 import 해 재사용한다.
+- 모든 진단 로그는 stderr 로만 출력한다. stdout 은 JSON-RPC 전용.
+- Discord 로그인은 서버 시작 시 1회 수행하고 프로세스 수명 동안 유지한다. 시작 로그인 실패 시 stderr 로그 후 `exit(1)` (fail-fast). 로그인 성공 후 도구 호출 중 발생한 런타임 오류는 `isError: true` 콘텐츠로 반환하며 프로세스를 종료하지 않는다.
+
+### 응답 형식 (성공)
+
+```
+Result: <winningLabel>
+Outcome: <majority|tie|no-quorum|timeout>
+Votes: <totalVotes>/<quorumTotal> (quorum <met|not met>)
+Fallback: <none|host>
+```
+
+### 등록 (수동 통합 점검)
+
+빌드 후 `claude mcp add` 로 등록한다. 투표 타임아웃(`VoteRules.timeoutMs`, 기본 180000ms)보다 최소 30000ms 큰 도구 타임아웃(>= 210000)을 줘야 한다.
+
+```bash
+npm run build
+claude mcp add council-vote \
+  --env DISCORD_TOKEN=... \
+  --env DISCORD_CHANNEL_ID=... \
+  --env HOST_USER_ID=... \
+  -- node dist/mcp/server.js
+```
+
+또는 프로젝트 `.mcp.json` 에 다음을 추가한다(타임아웃 210000 = 180000 + 30000 버퍼):
+
+```json
+{
+  "mcpServers": {
+    "council-vote": {
+      "command": "node",
+      "args": ["dist/mcp/server.js"],
+      "timeout": 210000,
+      "env": { "DISCORD_TOKEN": "", "DISCORD_CHANNEL_ID": "", "HOST_USER_ID": "" }
+    }
+  }
+}
+```
+
+> `claude mcp add` 를 통한 end-to-end 등록은 `npm test` 로 게이트되지 않는 수동 통합 점검이다. 자동 검증은 `councilTool`/`server` 단위 테스트(모킹 어댑터/주입 fake)로 수행한다.
