@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   createCouncilVoteHandler,
   councilVoteInputShape,
@@ -6,7 +6,14 @@ import {
   type CouncilVoteInput,
 } from "../src/mcp/councilTool.js";
 import type { MessagingAdapter, PollResult } from "../src/discord/adapter.js";
-import type { CouncilQuestion, VoteRules } from "../src/council/types.js";
+import type { CouncilQuestion, VoteRules, TallyResult } from "../src/council/types.js";
+import * as canUseTool from "../src/council/canUseTool.js";
+
+// 코어 canUseTool 모듈은 그대로 두되(소스 변경 없음), host-fallback 분기 검증을 위해
+// spyOn 으로 resolveCouncilDecision 를 일시 대체할 수 있도록 모듈을 모킹 가능 상태로 둔다.
+vi.mock("../src/council/canUseTool.js", async (importOriginal) => {
+  return await importOriginal<typeof import("../src/council/canUseTool.js")>();
+});
 
 const rules: VoteRules = {
   timeoutMs: 180_000,
@@ -70,6 +77,10 @@ describe("councilVoteInputShape (AC: zod raw shape)", () => {
 });
 
 describe("createCouncilVoteHandler", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("정족수 충족 + 단독 최다득표 -> majority, fallback none", async () => {
     const poll: PollResult = {
       votes: [
@@ -147,6 +158,34 @@ describe("createCouncilVoteHandler", () => {
     const text = res.content[0].text;
     expect(text).toContain("Outcome: timeout");
     expect(text).toContain("Fallback: host");
+  });
+
+  it("알 수 없는(분류 외) 결과 -> host-fallback, 호스트 폴백", async () => {
+    // 코어가 향후/예외적으로 4종 외 outcome 을 돌려주는 경우의 방어적 매핑 검증.
+    // resolveCouncilDecision 를 일시 대체해 default 분기(host-fallback)를 강제한다.
+    const fallbackResult = {
+      choice: "C",
+      outcome: "host-escalation" as TallyResult["outcome"],
+      contested: true,
+    };
+    vi.spyOn(canUseTool, "resolveCouncilDecision").mockResolvedValue(
+      fallbackResult,
+    );
+
+    const poll: PollResult = {
+      votes: [{ userId: "u1", choice: "C" }],
+      participantCount: 2,
+      timedOut: false,
+    };
+    const handler = createCouncilVoteHandler(mockAdapter({ poll }), rules);
+    const res = await handler(sampleInput);
+
+    expect(res.isError).toBeUndefined();
+    const text = res.content[0].text;
+    expect(text).toContain("Result: C");
+    expect(text).toContain("Outcome: host-fallback");
+    expect(text).toContain("Fallback: host");
+    expect(text.split("\n")).toHaveLength(4);
   });
 
   it("런타임 오류는 throw 하지 않고 isError=true 콘텐츠로 반환한다", async () => {
