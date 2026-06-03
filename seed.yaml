@@ -1,162 +1,67 @@
-goal: Build a collaborative Claude Code session tool where multiple participants vote
-  on Claude's AskUserQuestion via Discord bot, using TypeScript Agent SDK's canUseTool
-  callback to intercept questions, broadcast to Discord, collect votes, and inject
-  the consensus answer back to Claude
+goal: Build an MCP stdio server (council_vote tool) that sends Claude Code's multiple-choice
+  questions as Discord button votes and returns structured team consensus results,
+  replacing the canUseTool interception approach to work in standard claude CLI/IDE environments
 task_type: code
 brownfield_context:
   project_type: brownfield
   context_references:
-  - path: ./src
-    role: primary
-    summary: TypeScript Agent SDK + discord.js project with canUseTool interception
-      handler, vote tallying logic, MessagingAdapter abstraction, and DiscordAdapter
-      skeleton
-  - path: stt-verify-agent
-    role: reference
-    summary: Kotlin/Koog STT verification agent with askUser tool - UX and structure
-      reference only, no code reuse
-  existing_patterns:
-  - canUseTool callback to intercept AskUserQuestion tool calls
-  - MessagingAdapter abstraction layer for channel backends (Discord now, Slack later)
-  - Vote tallying with quorum check and host fallback
-  - Vitest for unit testing
-  existing_dependencies:
-  - '@anthropic-ai/claude-agent-sdk'
-  - discord.js
-  - vitest
+  - {path: src/council/tally.ts, role: reference, summary: "Vote tallying (quorum, tie, timeout classification) and DEFAULT_RULES. Imported and called unchanged"}
+  - {path: src/council/canUseTool.ts, role: reference, summary: "Exports resolveCouncilDecision(question, adapter, rules) returning TallyResult. Invoked as-is by the MCP handler; source not modified"}
+  - {path: src/discord/adapter.ts, role: reference, summary: "DiscordAdapter implementing MessagingAdapter and VoteChannel ports. Imported and instantiated unchanged"}
+  - {path: src/discord/discordVoteChannel.ts, role: reference, summary: "Discord vote channel implementation (live count edits). Imported and instantiated unchanged"}
+  - {path: src/discord/voteMessage.ts, role: reference, summary: "Vote message formatting (buttons/embed/footer). Used unchanged"}
+  - {path: src/config.ts, role: reference, summary: "loadConfig() returns AppConfig {discordToken, discordChannelId, rules: VoteRules}. Called unchanged"}
+  - {path: src/council/types.ts, role: reference, summary: "Shared types CouncilQuestion, VoteRules, TallyResult. Imported unchanged"}
+  - {path: src/mcp/, role: target, summary: "New directory for the MCP server: councilTool.ts (handler factory) and server.ts (entry point)"}
 constraints:
-- TypeScript + Claude Code Agent SDK (@anthropic-ai/claude-agent-sdk)
-- Discord bot (discord.js) as sole messaging channel for MVP
-- canUseTool callback for AskUserQuestion interception and answer injection
-- 'Discord channel membership verification - only current channel members can vote'
-- Default 3-minute vote timeout (configurable per session/question)
-- Default majority quorum (configurable)
-- Host fallback on tie or quorum failure
-- MVP scope limited to multiple-choice questions only
-- No Slack support in MVP
-- No free-text 2-stage consensus in MVP
-- No error recovery (bot down/session disconnect) in MVP
-- Single Node.js runtime for bot + SDK integration
+- All logging must go to stderr only - stdout is reserved for JSON-RPC and must never be polluted
+- TypeScript ESM (package type module, node >= 20) with discord.js and vitest
+- MCP SDK @modelcontextprotocol/sdk 1.29.0 with zod 4.4.3 (zod provided transitively via the SDK)
+- Reuse existing core modules by importing and calling them unchanged (do not modify their source) - src/council/tally.ts, resolveCouncilDecision in src/council/canUseTool.ts, src/discord/adapter.ts, discordVoteChannel.ts, voteMessage.ts, src/config.ts, src/council/types.ts. resolveCouncilDecision is the core orchestration entry point invoked by the handler
+- Discord Client login once at server startup, maintained for process lifetime
+- Discord login failure at startup triggers fail-fast - log error to stderr and exit the process immediately
+- After successful startup login, runtime errors during council_vote tool calls return content with isError set true (never McpError throws) and must not exit the process
+- Vote timeout is sourced from VoteRules.timeoutMs (default 180000) on the rules passed into the handler factory; the MCP tool timeout (.mcp.json timeout or MCP_TOOL_TIMEOUT) must be at least VoteRules.timeoutMs plus a 30000ms buffer
+- McpServer import from server/mcp.js, StdioServerTransport from server/stdio.js; tool registration via server.registerTool(name, config, cb) with a zod raw shape inputSchema
 acceptance_criteria:
-- '"Host starts Claude Code session via TS Agent SDK and canUseTool intercepts AskUserQuestion(multiple-choice)
-  successfully"'
-- '"Intercepted question with choices is forwarded to Discord channel as button vote"'
-- '"Participants vote via Discord buttons and majority-voted answer is injected
-  back to Claude"'
-- '"Claude resumes work using the injected answer, verified by asserting canUseTool returns {behavior:allow, updatedInput.answers} with mocked SDK"'
-- '"When quorum is not met within timeout, host receives fallback decision prompt"'
-- '"When votes are tied at timeout, host receives fallback decision prompt"'
-- '"When no one votes within 3 minutes, host receives fallback decision prompt and
-  can answer directly"'
-- '"Unit/integration tests with mocked Discord API cover vote tallying, timeout, and
-  host fallback paths"'
-- '"npm test passes green as code-level acceptance gate"'
+- src/mcp/councilTool.ts exports createCouncilVoteHandler(adapter, rules) factory (pure - no Discord login, unit-testable) that builds a CouncilQuestion from the input, calls resolveCouncilDecision, and on success returns a single text content of exactly four lines joined by a newline - "Result: <winningLabel>", "Outcome: <majority|tie|no-quorum|timeout|host-fallback>", "Votes: <totalVotes>/<quorumTotal> (quorum met|quorum not met)", "Fallback: <none|host>"; on a runtime error it instead returns a single text content with isError true carrying an error message, with no four-line template and no process exit
+- src/mcp/server.ts is the entry point - calls loadConfig(), logs in a discord.js Client once, constructs DiscordVoteChannel and DiscordAdapter, registers council_vote on a McpServer, connects a StdioServerTransport, and routes all logs to stderr; on login failure it logs to stderr and exits
+- council_vote inputSchema (zod raw shape) accepts question string, optional header string, and an options array of minimum 2 entries each with label string and optional description string
+- test/councilTool.test.ts uses a mock MessagingAdapter to verify the four-line content for majority, tie, no-quorum, timeout, and host-fallback outcomes plus the isError error path, asserting via includes on the Result/Outcome lines; the new file sits alongside the existing 11 test files and runs under vitest run without disturbing the existing 82 tests
+- package.json gains an "mcp" script "tsx src/mcp/server.ts" and a bin entry mapping "council-vote" to "dist/mcp/server.js" (built via npm run build / tsc)
 ontology_schema:
-  name: CollaborativeVoteSession
-  description: Domain model for a multi-participant voting session that intercepts
-    Claude Code agent questions and collects consensus answers via Discord
+  name: CouncilVote
+  description: Domain model for the MCP-based Discord voting tool. Fields are tagged input (request parameters from Claude), output (response fields returned to Claude), or config
   fields:
-  - name: sessionId
-    type: string
-    description: Unique identifier for the Claude Code agent session
-    required: true
-  - name: hostId
-    type: string
-    description: Discord user ID of the session starter who has fallback authority
-    required: true
-  - name: channelId
-    type: string
-    description: Discord channel where votes are broadcast
-    required: true
-  - name: participants
-    type: array
-    description: List of Discord member IDs eligible to vote (channel members)
-    required: true
-  - name: interceptedToolName
-    type: string
-    description: Name of the Claude tool intercepted by canUseTool callback (MVP - 'AskUserQuestion')
-    required: true
-  - name: question
-    type: object
-    description: The intercepted AskUserQuestion containing text and choices
-    required: true
-  - name: questionType
-    type: string
-    description: Type of question - multiple_choice only in MVP
-    required: true
-  - name: choices
-    type: array
-    description: 'Answer options for the multiple-choice question; array of objects {label: string, description?: string} mirroring AskUserQuestion option shape'
-    required: true
-  - name: votes
-    type: object
-    description: 'Map of participantId to selected choice label; last vote per participant wins'
-    required: true
-  - name: quorum
-    type: number
-    description: 'Minimum ratio of cast voters to total participants required for a valid vote (default 0.5). Quorum check: uniqueVoters/participants >= quorum'
-    required: true
-  - name: voteResolutionAlgorithm
-    type: string
-    description: '1) check quorum (uniqueVoters/participants >= quorum); 2) if met, winner = choice with plurality of cast votes; 3) tie among top choices OR quorum unmet OR no votes at timeout -> host fallback'
-    required: true
-  - name: timeoutSeconds
-    type: number
-    description: 'Vote window duration in seconds (default 180); countdown starts when the Discord message with voting buttons is posted'
-    required: true
-  - name: status
-    type: string
-    description: Current vote status - pending, active, resolved, fallback
-    required: true
-  - name: resolvedAnswer
-    type: string
-    description: Final answer (choice label) to inject back to Claude (set only after resolution)
-    required: false
-  - name: resolvedBy
-    type: string
-    description: How the answer was determined - majority, host_tiebreak, host_quorum_fail, host_timeout (set only after resolution)
-    required: false
-  - name: injectionPayload
-    type: object
-    description: 'canUseTool return injected to Claude: {behavior: "allow", updatedInput: {questions, answers: {<questionText>: <resolvedAnswer label>}}} (set only after resolution)'
-    required: false
+  - {name: question, type: string, required: true, description: "[input] Question text Claude wants the team to vote on"}
+  - {name: header, type: string, required: false, description: "[input] Optional header/context for the vote message"}
+  - {name: options, type: array, required: true, description: "[input] Vote options (min 2), each with label and optional description"}
+  - {name: label, type: string, required: true, description: "[input] Display label for a vote option"}
+  - {name: description, type: string, required: false, description: "[input] Optional detail for a vote option"}
+  - {name: winningLabel, type: string, required: true, description: "[output] Label of the winning option, shown in the Result line"}
+  - {name: outcome, type: string, required: true, description: "[output] Result classification - majority|tie|no-quorum|timeout|host-fallback"}
+  - {name: totalVotes, type: number, required: true, description: "[output] Number of votes cast, shown in the Votes line"}
+  - {name: quorumTotal, type: number, required: true, description: "[output] Total eligible voters for quorum, shown in the Votes line"}
+  - {name: quorumMet, type: boolean, required: true, description: "[output] Whether the required quorum threshold was met"}
+  - {name: fallback, type: string, required: true, description: "[output] Fallback indicator - none|host"}
+  - {name: isError, type: boolean, required: true, description: "[output] Set true when a runtime error occurred; replaces the four-line template"}
+  - {name: timeoutMs, type: number, required: true, description: "[config] Vote timeout in ms from VoteRules.timeoutMs, default 180000"}
 evaluation_principles:
-- name: vote_integrity
-  description: Vote tallying correctly determines majority winner and detects ties
-    and quorum failures
-  weight: 0.3
-- name: intercept_inject_reliability
-  description: canUseTool callback reliably intercepts AskUserQuestion and injects
-    resolved answer back to Claude
-  weight: 0.3
-- name: discord_ux
-  description: Questions and choices render clearly in Discord with intuitive button
-    voting
-  weight: 0.15
-- name: fallback_correctness
-  description: Host fallback activates correctly on timeout, tie, or quorum failure
-  weight: 0.15
-- name: test_coverage
-  description: Automated tests cover core paths - tallying, timeout, fallback - with
-    mocked Discord API
-  weight: 0.1
+- {name: stdout_purity, description: No output to stdout except JSON-RPC protocol messages, weight: 1.0}
+- {name: core_preservation, description: Existing core modules (tally, adapter, config, types) remain unmodified and all 82 existing tests pass, weight: 0.9}
+- {name: error_handling, description: Startup login failure causes fail-fast exit; post-login runtime errors return isError content without exiting, weight: 0.85}
+- {name: response_structure, description: Success content is the exact four-line template joined by newline (Result/Outcome/Votes/Fallback) verifiable with includes, weight: 0.8}
+- {name: factory_pattern, description: createCouncilVoteHandler uses factory pattern accepting adapter and rules, decoupled from Discord specifics and from process/transport concerns, weight: 0.75}
+- {name: test_coverage, description: Mock adapter tests verify majority, tie, no-quorum, timeout, host-fallback, and isError scenarios via vitest, weight: 0.75}
 exit_conditions:
-- name: mvp_complete
-  description: All three MVP scenarios pass automated and manual verification
-  criteria: npm test green AND one successful manual e2e demo with real Discord channel
-- name: vote_e2e_pass
-  description: Multiple-choice vote end-to-end flow works
-  criteria: Question intercepted, forwarded to Discord, votes collected, majority
-    answer injected, Claude resumes
-- name: fallback_pass
-  description: Host fallback works on all trigger conditions
-  criteria: Quorum failure, tie, and full timeout all correctly delegate to host
+- {name: build_pass, description: TypeScript compilation succeeds, criteria: tsc exits with code 0}
+- {name: tests_pass, description: All vitest tests pass including new and existing 82 tests, criteria: npm test exits with code 0}
+- {name: mcp_registration, description: council_vote registers via claude mcp add and responds, criteria: MCP server starts, connects via stdio, handles council_vote invocations}
+- {name: discord_login, description: Discord Client logs in at startup or process exits immediately on failure, criteria: login success logged to stderr or process exits with error}
 metadata:
-  seed_id: seed_8333469f1531
+  seed_id: seed_6701a92e0dd9
   version: 1.0.0
-  created_at: '2026-06-02T00:39:07.589814Z'
-  ambiguity_score: 0.145
-  interview_id: interview_20260601_235040
-  qa_accepted_below_threshold: true
-  qa_final_score: 0.87
-  qa_threshold: 0.90
+  ambiguity_score: 0.0905
+  interview_id: interview_20260603_132829
+  qa_passed_iteration: 4
+  qa_score: 0.92
