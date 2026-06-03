@@ -12,22 +12,23 @@ brownfield_context:
   - {path: src/discord/voteMessage.ts, role: reference, summary: "Vote message formatting (buttons/embed/footer). Used unchanged"}
   - {path: src/config.ts, role: reference, summary: "loadConfig() returns AppConfig {discordToken, discordChannelId, rules: VoteRules}. Called unchanged"}
   - {path: src/council/types.ts, role: reference, summary: "Shared types CouncilQuestion, VoteRules, TallyResult. Imported unchanged"}
-  - {path: src/mcp/, role: target, summary: "New directory for the MCP server: councilTool.ts (handler factory) and server.ts (entry point)"}
+  - {path: src/mcp/, role: target, summary: "New MCP server dir - councilTool.ts (handler factory), bootstrap.ts (DI wiring), server.ts (thin entry shell)"}
 constraints:
 - All logging must go to stderr only - stdout is reserved for JSON-RPC and must never be polluted
 - TypeScript ESM (package type module, node >= 20) with discord.js and vitest
 - MCP SDK @modelcontextprotocol/sdk 1.29.0 with zod 4.4.3 (zod provided transitively via the SDK)
 - Reuse existing core modules by importing and calling them unchanged (do not modify their source) - src/council/tally.ts, resolveCouncilDecision in src/council/canUseTool.ts, src/discord/adapter.ts, discordVoteChannel.ts, voteMessage.ts, src/config.ts, src/council/types.ts. resolveCouncilDecision is the core orchestration entry point invoked by the handler
+- Server wiring (config load, Discord login, tool registration, transport connect, fail-fast) lives in a dependency-injected bootstrap (src/mcp/bootstrap.ts) accepting injectable loadConfig, createClient, login, createServer, createTransport, exit, and logError, so the wiring is unit-testable with fakes (Dependency Inversion). src/mcp/server.ts is a thin shell that injects the real implementations only
 - Discord Client login once at server startup, maintained for process lifetime
-- Discord login failure at startup triggers fail-fast - log error to stderr and exit the process immediately
+- Discord login failure at startup triggers fail-fast - log error to stderr and call exit(1) without registering the tool or connecting the transport
 - After successful startup login, runtime errors during council_vote tool calls return content with isError set true (never McpError throws) and must not exit the process
 - Vote timeout is sourced from VoteRules.timeoutMs (default 180000) on the rules passed into the handler factory; the MCP tool timeout (.mcp.json timeout or MCP_TOOL_TIMEOUT) must be at least VoteRules.timeoutMs plus a 30000ms buffer
 - McpServer import from server/mcp.js, StdioServerTransport from server/stdio.js; tool registration via server.registerTool(name, config, cb) with a zod raw shape inputSchema
 acceptance_criteria:
 - src/mcp/councilTool.ts exports createCouncilVoteHandler(adapter, rules) factory (pure - no Discord login, unit-testable) that builds a CouncilQuestion from the input, calls resolveCouncilDecision, and on success returns a single text content of exactly four lines joined by a newline - "Result: <winningLabel>", "Outcome: <majority|tie|no-quorum|timeout|host-fallback>", "Votes: <totalVotes>/<quorumTotal> (quorum met|quorum not met)", "Fallback: <none|host>"; on a runtime error it instead returns a single text content with isError true carrying an error message, with no four-line template and no process exit
-- src/mcp/server.ts is the entry point - calls loadConfig(), logs in a discord.js Client once, constructs DiscordVoteChannel and DiscordAdapter, registers council_vote on a McpServer, connects a StdioServerTransport, and routes all logs to stderr; on login failure it logs to stderr and exits
-- council_vote inputSchema (zod raw shape) accepts question string, optional header string, and an options array of minimum 2 entries each with label string and optional description string
-- test/councilTool.test.ts uses a mock MessagingAdapter to verify the four-line content for majority, tie, no-quorum, timeout, and host-fallback outcomes plus the isError error path, asserting via includes on the Result/Outcome lines; the new file sits alongside the existing 11 test files and runs under vitest run without disturbing the existing 82 tests
+- src/mcp/bootstrap.ts exports bootstrap(deps) that, given injected loadConfig/createClient/login/createServer/createTransport/exit/logError, on successful login constructs DiscordVoteChannel and DiscordAdapter, registers council_vote on the McpServer, and connects the StdioServerTransport (logging only to stderr). On login rejection it logs the error to stderr and calls exit(1) without registering or connecting. src/mcp/server.ts is a thin shell that calls bootstrap with the real discord.js Client, process.exit, and console.error
+- council_vote inputSchema is the zod raw shape { question: z.string(), header: z.string().optional(), options: z.array(z.object({ label: z.string(), description: z.string().optional() })).min(2) }
+- test/councilTool.test.ts (mock MessagingAdapter) verifies the four-line content for majority, tie, no-quorum, timeout, and host-fallback outcomes plus the isError error path, asserting via includes on the Result/Outcome lines. test/server.test.ts injects fake deps into bootstrap to verify (a) happy path - login called once, council_vote registered, transport connected, exit not called, and (b) fail-fast - on login rejection, stderr logged, exit(1) called, no registration or connect. Both run under vitest run alongside the existing 11 test files without disturbing the existing 82 tests
 - package.json gains an "mcp" script "tsx src/mcp/server.ts" and a bin entry mapping "council-vote" to "dist/mcp/server.js" (built via npm run build / tsc)
 ontology_schema:
   name: CouncilVote
@@ -49,19 +50,20 @@ ontology_schema:
 evaluation_principles:
 - {name: stdout_purity, description: No output to stdout except JSON-RPC protocol messages, weight: 1.0}
 - {name: core_preservation, description: Existing core modules (tally, adapter, config, types) remain unmodified and all 82 existing tests pass, weight: 0.9}
-- {name: error_handling, description: Startup login failure causes fail-fast exit; post-login runtime errors return isError content without exiting, weight: 0.85}
+- {name: testable_wiring, description: Server wiring lives in a dependency-injected bootstrap so login-once, fail-fast exit, council_vote registration, and transport connect are unit-testable with injected fakes (DIP), weight: 0.85}
+- {name: error_handling, description: Startup login failure causes fail-fast exit(1) without registering or connecting; post-login runtime errors return isError content without exiting, weight: 0.85}
 - {name: response_structure, description: Success content is the exact four-line template joined by newline (Result/Outcome/Votes/Fallback) verifiable with includes, weight: 0.8}
 - {name: factory_pattern, description: createCouncilVoteHandler uses factory pattern accepting adapter and rules, decoupled from Discord specifics and from process/transport concerns, weight: 0.75}
 - {name: test_coverage, description: Mock adapter tests verify majority, tie, no-quorum, timeout, host-fallback, and isError scenarios via vitest, weight: 0.75}
 exit_conditions:
 - {name: build_pass, description: TypeScript compilation succeeds, criteria: tsc exits with code 0}
-- {name: tests_pass, description: All vitest tests pass including new and existing 82 tests, criteria: npm test exits with code 0}
-- {name: mcp_registration, description: council_vote registers via claude mcp add and responds, criteria: MCP server starts, connects via stdio, handles council_vote invocations}
-- {name: discord_login, description: Discord Client logs in at startup or process exits immediately on failure, criteria: login success logged to stderr or process exits with error}
+- {name: tests_pass, description: All vitest tests pass including new councilTool and server tests and existing 82 tests, criteria: npm test exits with code 0}
+- {name: wiring_verified, description: bootstrap login-once, fail-fast exit(1), council_vote registration, and transport connect are asserted via injected fakes in test/server.test.ts, criteria: server.test.ts assertions pass under npm test}
+- {name: mcp_registration_manual, description: End-to-end registration via claude mcp add is a manual integration check outside npm test, criteria: documented in README and not gated by the automated test suite}
 metadata:
   seed_id: seed_6701a92e0dd9
-  version: 1.0.0
+  version: 1.1.0
   ambiguity_score: 0.0905
   interview_id: interview_20260603_132829
-  qa_passed_iteration: 4
-  qa_score: 0.92
+  qa_passed_iteration: 6
+  qa_score: 0.94
