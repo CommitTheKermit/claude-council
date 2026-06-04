@@ -31,6 +31,8 @@
 
 각 팀이 자기 Discord 봇을 한 번 만들어 쓰는 방식이다. 봇 토큰은 자동으로 얻을 수 없어 누군가 한 번은 아래 A 단계를 거쳐야 한다(약 3분). 채널 ID / 사용자 ID 는 Discord 개발자 모드 토글만 켜면 바로 복사할 수 있다.
 
+설치 흐름은 두 단계다. **(1) 비밀값 없이 한 줄로 MCP 서버 등록 -> (2) Claude Code 안에서 `/council-setup` 마법사로 토큰/채널ID/호스트ID 채우기.** `.env`나 `.mcp.json`을 손으로 편집할 필요가 없다.
+
 준비물: Node.js >= 20, `claude` CLI, Discord 서버(길드) 관리 권한.
 
 ## A. Discord 봇 생성 (한 번만)
@@ -51,56 +53,46 @@
 2. 투표를 띄울 채널 우클릭 -> **채널 ID 복사** = `DISCORD_CHANNEL_ID`.
 3. 호스트(폴백 결정권자)로 쓸 사용자를 우클릭 -> **사용자 ID 복사** = `HOST_USER_ID`.
 
-## C. 프로젝트 설치 / 빌드
+## C. Claude 인증 (과금 주의)
+
+`ANTHROPIC_API_KEY` 를 설정하면 종량 과금 경로를 탄다. Max/Pro 구독으로 추가 과금 없이 쓰려면 그 키를 **설정하지 말고**, 로컬에서 한 번 `claude /login` 으로 구독 OAuth 세션을 만들어 둔다. (CI 등 비대화형 환경은 `claude setup-token` 으로 `CLAUDE_CODE_OAUTH_TOKEN` 발급)
+
+## D. council_vote MCP 서버 등록 (비밀값 없이 한 줄)
+
+비밀값은 지금 넣지 않는다. 다음 줄로 서버만 등록한다. `npx` 가 npm 의 `claude-council` 패키지를 받아 실행하므로 별도 clone/빌드가 필요 없다.
+
+```bash
+claude mcp add council-vote -- npx -y claude-council
+```
+
+> 토큰/채널ID/호스트ID 는 다음 단계 `E` 의 `/council-setup` 마법사가 `~/.claude/mcp.json` 에 채워준다. 타임아웃(투표 180초 + 30초 버퍼 = 210000ms)도 마법사가 함께 설정한다.
+
+<details>
+<summary>대안: 레포를 직접 clone/빌드해서 쓰기 (개발/미발행 환경)</summary>
 
 ```bash
 git clone <repo-url>
 cd claude-council
 npm install
-npm run build      # tsc -> dist/ 생성 (council_vote 진입점 dist/mcp/server.js)
-npm test           # 14 파일 98 테스트 green 확인 (선택)
+npm run build      # tsc -> dist/ 생성 (진입점 dist/mcp/server.js)
+npm test           # 전체 테스트 green 확인 (선택)
+claude mcp add council-vote -- node dist/mcp/server.js
 ```
 
-## D. Claude 인증 (과금 주의)
+</details>
 
-`ANTHROPIC_API_KEY` 를 설정하면 종량 과금 경로를 탄다. Max/Pro 구독으로 추가 과금 없이 쓰려면 그 키를 **설정하지 말고**, 로컬에서 한 번 `claude /login` 으로 구독 OAuth 세션을 만들어 둔다. (CI 등 비대화형 환경은 `claude setup-token` 으로 `CLAUDE_CODE_OAUTH_TOKEN` 발급)
+## E. `/council-setup` 마법사로 비밀값 채우기
 
-## E. council_vote MCP 서버 등록
+새 `claude` 세션에서 `/council-setup` 을 실행하면 마법사가 토큰/채널ID/호스트ID 를 단계별로 물어보고, `~/.claude/mcp.json` 의 `council-vote` 엔트리(`env` + `timeout`)를 직접 작성한다.
 
-투표 타임아웃(`VoteRules.timeoutMs`, 기본 180000ms)보다 **최소 30000ms 큰** 도구 타임아웃(`>= 210000`)을 줘야 3분 투표가 중간에 끊기지 않는다.
+- 입력값은 화면에 **마스킹**되어 되읽어 준다 (마지막 4자만 표시).
+- 덮어쓰기 전 `~/.claude/mcp.json.bak` **백업**을 만든다.
+- 세 값을 모두 받은 뒤 **한 번에** 쓴다(중간 취소 시 파일 미변경). 깨진 JSON 이면 손대지 않고 멈춘다.
+- 비밀값은 홈 디렉토리(`~/.claude/mcp.json`)에만 저장되어 레포(git)에는 남지 않는다.
 
-### 방법 1: `claude mcp add`
+마법사는 파일 작성 + 안내까지만 한다. **저장 후 세션을 재시작**해야 새 설정이 로드된다(`F` 에서 확인).
 
-```bash
-claude mcp add council-vote \
-  --env DISCORD_TOKEN=<봇 토큰> \
-  --env DISCORD_CHANNEL_ID=<채널 ID> \
-  --env HOST_USER_ID=<호스트 사용자 ID> \
-  -- node dist/mcp/server.js
-```
-
-### 방법 2: 프로젝트 `.mcp.json`
-
-타임아웃 210000 = 180000 + 30000 버퍼. 비밀값은 셸 환경에서 주입하거나 직접 채운다.
-
-```json
-{
-  "mcpServers": {
-    "council-vote": {
-      "command": "node",
-      "args": ["dist/mcp/server.js"],
-      "timeout": 210000,
-      "env": {
-        "DISCORD_TOKEN": "",
-        "DISCORD_CHANNEL_ID": "",
-        "HOST_USER_ID": ""
-      }
-    }
-  }
-}
-```
-
-> `.env` 파일로도 값을 줄 수 있다. `cp .env.example .env` 후 값을 채우면 서버가 `dotenv` 로 읽는다. 단, MCP 등록의 `timeout` 은 `.mcp.json`/`claude mcp add` 쪽에서 지정해야 한다.
+> 마법사를 쓰지 않고 직접 넣으려면 `claude mcp add council-vote --env DISCORD_TOKEN=... --env DISCORD_CHANNEL_ID=... --env HOST_USER_ID=... -- npx -y claude-council` 처럼 `--env` 로 주거나, `~/.claude/mcp.json` 의 `council-vote.env` 를 손으로 채워도 된다.
 
 ## F. Claude 가 council_vote 를 쓰도록 유도
 
@@ -114,7 +106,7 @@ council_vote MCP 도구를 호출해 Discord 투표로 합의를 받을 것.
 
 ## G. 동작 확인
 
-1. 새 `claude` 세션을 연다.
+1. `/council-setup` 으로 비밀값을 채웠다면 `claude` 세션을 **재시작**한다 (MCP 는 세션 시작 시 로드됨).
 2. `/mcp` 로 `council-vote` 가 connected 인지 확인한다.
 3. 팀 결정이 필요한 질문을 던져 Claude 가 `council_vote` 를 호출하면, 지정 Discord 채널에 버튼 투표 메시지가 뜬다.
 
@@ -122,16 +114,16 @@ council_vote MCP 도구를 호출해 Discord 투표로 합의를 받을 것.
 
 ## 환경변수 정리
 
-`loadConfig()` 가 `process.env`(또는 `.env`)에서 읽는다.
+`loadConfig()` 가 `process.env` 에서 읽는다. 필수 3개는 보통 `/council-setup` 마법사가 `~/.claude/mcp.json` 의 `council-vote.env` 에 써준다(직접 `--env`/`.env` 로 줘도 됨).
 
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `DISCORD_TOKEN` | 필수 | - | Discord 봇 토큰 (A-3) |
-| `DISCORD_CHANNEL_ID` | 필수 | - | 투표를 띄울 채널 ID (B-2) |
-| `HOST_USER_ID` | 필수 | - | 폴백 결정권을 가진 호스트 사용자 ID (B-3) |
+| `DISCORD_TOKEN` | 필수 | - | Discord 봇 토큰 (A-3). 마법사가 작성 |
+| `DISCORD_CHANNEL_ID` | 필수 | - | 투표를 띄울 채널 ID (B-2). 마법사가 작성 |
+| `HOST_USER_ID` | 필수 | - | 폴백 결정권을 가진 호스트 사용자 ID (B-3). 마법사가 작성 |
 | `VOTE_TIMEOUT_SECONDS` | 선택 | 180 | 투표 타임아웃(초). MCP 도구 타임아웃은 이 값 + 30초 이상 |
 | `VOTE_QUORUM_RATIO` | 선택 | 0.5 | 정족수 비율(0-1), 기본 과반 |
-| `ANTHROPIC_API_KEY` | 선택 | - | 설정 시 종량 과금. 구독 사용자는 비워둘 것 (D 참고) |
+| `ANTHROPIC_API_KEY` | 선택 | - | 설정 시 종량 과금. 구독 사용자는 비워둘 것 (C 참고) |
 
 ## 응답 형식
 
@@ -171,8 +163,12 @@ src/
     councilTool.ts        # createCouncilVoteHandler 팩토리 + zod inputSchema
     bootstrap.ts          # DI 부팅 와이어링 (login/register/connect, fail-fast)
     server.ts             # MCP stdio 진입점 (실제 의존성 주입 thin shell)
+  setup/
+    configWriter.ts       # /council-setup 설정 쓰기 (마스킹/백업/병합/all-or-nothing)
   index.ts                # (레거시) Agent SDK canUseTool 래퍼 진입점
-test/                     # 14 파일 98 테스트 (집계/타임아웃/폴백/MCP 핸들러/부팅 와이어링)
+skills/
+  council-setup/SKILL.md  # /council-setup 셋업 마법사 가이드
+test/                     # vitest 단위 테스트 (집계/타임아웃/폴백/MCP 핸들러/부팅/셋업 쓰기)
 ```
 
 ## 개발

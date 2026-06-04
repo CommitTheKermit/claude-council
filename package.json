@@ -3,12 +3,25 @@
   "version": "0.1.0",
   "description": "여러 사람이 하나의 Claude Code 세션의 질문에 Discord에서 투표/합의해 답하는 협업 도구",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "discord",
+    "voting",
+    "collaboration"
+  ],
   "engines": {
     "node": ">=20"
   },
   "bin": {
     "council-vote": "dist/mcp/server.js"
   },
+  "files": [
+    "dist",
+    "skills"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
@@ -18,7 +31,8 @@
     "dev:mcp": "tsx src/mcp/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
