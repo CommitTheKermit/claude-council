@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "council-vote": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "claude-council"],
+      "timeout": 210000,
+      "env": {
+        "DISCORD_TOKEN": "${DISCORD_TOKEN}",
+        "DISCORD_CHANNEL_ID": "${DISCORD_CHANNEL_ID}",
+        "HOST_USER_ID": "${HOST_USER_ID}"
+      }
+    }
+  }
+}
