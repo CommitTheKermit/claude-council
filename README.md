@@ -165,9 +165,10 @@ src/
     server.ts             # MCP stdio 진입점 (실제 의존성 주입 thin shell)
   setup/
     configWriter.ts       # /council-setup 설정 쓰기 (마스킹/백업/병합/all-or-nothing)
+    applyFromEnv.ts       # 환경변수 -> configWriter 러너 (마법사가 호출)
   index.ts                # (레거시) Agent SDK canUseTool 래퍼 진입점
-skills/
-  council-setup/SKILL.md  # /council-setup 셋업 마법사 가이드
+.claude/skills/
+  council-setup/SKILL.md  # /council-setup 셋업 마법사 (프로젝트 스킬 디스커버리 경로)
 test/                     # vitest 단위 테스트 (집계/타임아웃/폴백/MCP 핸들러/부팅/셋업 쓰기)
 ```
 

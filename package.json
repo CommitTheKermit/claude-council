@@ -20,7 +20,7 @@
   },
   "files": [
     "dist",
-    "skills"
+    ".claude/skills"
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
