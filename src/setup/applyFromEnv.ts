@@ -1,3 +1,7 @@
+// 프로젝트 루트의 .env 를 자동 로드한다. 사용자는 비밀값을 .env 에 직접 적어두고,
+// 마법사/Claude 는 그 값을 보거나 출력하지 않고 이 러너만 실행한다(대화 로그 노출 방지).
+// 명시적으로 넘긴 process.env 가 .env 보다 우선한다(dotenv 는 기존 값을 덮지 않음).
+import "dotenv/config";
 import os from "node:os";
 import path from "node:path";
 import { applyCouncilConfig, type McpConfig } from "./configWriter.js";
@@ -26,6 +30,8 @@ export function applyFromEnv(env: NodeJS.ProcessEnv = process.env): McpConfig {
 }
 
 // tsx/node 로 직접 실행되면 적용하고 작성 경로를 stderr 로 알린다(stdout 오염 방지).
+// 가드: 비밀값(토큰/ID)은 절대 stdout/stderr 로 출력하지 않는다. 작성 결과는 "경로"만 알린다.
+// 노출 검증이 필요하면 호출 측이 configWriter 의 maskSecret 으로 가려서만 보여줄 것.
 const directPath = process.argv[1];
 if (directPath && import.meta.url === `file://${directPath}`) {
   applyFromEnv();
