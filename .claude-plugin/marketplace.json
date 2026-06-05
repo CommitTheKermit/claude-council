@@ -1,0 +1,13 @@
+{
+  "name": "claude-council-marketplace",
+  "owner": {
+    "name": "ujeong"
+  },
+  "plugins": [
+    {
+      "name": "claude-council",
+      "source": "./",
+      "description": "Claude Code의 객관식 질문을 Discord 버튼 투표로 보내 팀 합의 답을 받는 협업 도구. council_vote MCP stdio 도구 + /council-setup 셋업 마법사 동봉."
+    }
+  ]
+}

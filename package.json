@@ -1,6 +1,6 @@
 {
   "name": "claude-council",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "여러 사람이 하나의 Claude Code 세션의 질문에 Discord에서 투표/합의해 답하는 협업 도구",
   "type": "module",
   "license": "MIT",
@@ -16,11 +16,12 @@
     "node": ">=20"
   },
   "bin": {
-    "council-vote": "dist/mcp/server.js"
+    "council-vote": "dist/mcp/server.js",
+    "council-setup": "dist/setup/applyFromEnv.js"
   },
   "files": [
     "dist",
-    ".claude/skills"
+    "skills"
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
