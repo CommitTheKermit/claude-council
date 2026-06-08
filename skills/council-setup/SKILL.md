@@ -102,19 +102,20 @@ done
 사용자가 "다 적었다"고 하면 다음으로 간다. 마법사가 `.env` 를 열어 값을 화면에 보이지 않는다.
 
 ### B-3. 러너를 blind 실행
-러너를 **인자 없이** 실행한다. 러너가 `import "dotenv/config"` 로 `.env` 를 읽어
-읽기 -> 파싱 -> 병합 -> `.bak` 백업 -> 1회 쓰기를 수행한다. 다른 서버는 보존되고, 깨진 JSON 이면
-예외를 던지고 아무것도 쓰지 않는다.
+출판된 `council-setup` bin 을 **인자 없이** 실행한다. 러너가 `import "dotenv/config"` 로
+현재 디렉토리의 `.env` 를 읽어 읽기 -> 파싱 -> 병합 -> `.bak` 백업 -> 1회 쓰기를 수행한다.
+다른 서버는 보존되고, 깨진 JSON 이면 예외를 던지고 아무것도 쓰지 않는다.
 
 ```bash
-npx tsx src/setup/applyFromEnv.ts
+npx -y -p claude-council council-setup
 ```
 
 세 값이 없으면 러너가 예외를 던지고 종료한다(all-or-nothing). 이때 `.env` 를 다시 확인하라고
 안내한다 - 토큰을 챗으로 받아 대신 넣어주지 않는다. 검증은 mcp.json 의 env 를 마스킹해서만
 보여준다.
 
-> 빌드본으로 돌리려면 `npm run build` 후 `node dist/setup/applyFromEnv.js`.
+> 이 저장소 소스에서 직접 돌릴 때는 `npx tsx src/setup/applyFromEnv.ts`
+> (빌드본은 `npm run build` 후 `node dist/setup/applyFromEnv.js`).
 > 토큰이 `.env` 가 아닌 OS 환경변수에 이미 export 돼 있으면 그 값이 `.env` 보다 우선한다
 > (dotenv 는 기존 `process.env` 를 덮지 않음).
 
